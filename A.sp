@@ -41,8 +41,13 @@ MA1 bl  wl q  0   nmos W='WA' L=0.045u
 MA2 blb wl qb 0   nmos W='WA' L=0.045u
 
 * ---------------- bitline capacitance ----------------
-Cbl  bl  0 180f
-Cblb blb 0 180f
+* CBL is a parameter so the read can be re-measured on a realistically loaded
+* column.  Part B's winning subarray is 336 um tall with 512 cells per bitline;
+* the wire alone is 0.2654 fF/um x 336 um = 89 fF, and the 512 unselected cell
+* drains add to that, so 180 fF corresponds to a much shorter column.
+.param CBL=180f
+Cbl  bl  0 'CBL'
+Cblb blb 0 'CBL'
 
 * ---------------- bitline precharge and equalise ----------------
 * Active-low precharge: PRE sits at 0 (devices on) until t = 0.7 ns, then rises
@@ -170,6 +175,29 @@ meas tran qmax  MAX  v(q)  FROM=1n TO=4n
 meas tran qfin  FIND v(q)  AT=4n
 wrdata work/t4_read_85_07v.data v(bl) v(blb) v(q) v(qb) v(wl)
 echo "T4c 85 0.16 0.7 $&dv $&qmax $&qfin $&vbl" >> work/t4_meas.data
+
+* ================= bitline-load sweep ======================================
+* Same cell, same timing, only the column height changes.  Reported at the
+* nominal point and at the 0.7 V / 85 C corner.
+echo "cbl_f vdd temp_C dv qmax" > work/t5_cbl_sweep.data
+alter @ma1[w] = 0.16u
+alter @ma2[w] = 0.16u
+foreach cb 180e-15 260e-15 345e-15 700e-15 1800e-15
+  alter @cbl[capacitance] = $cb
+  alter @cblb[capacitance] = $cb
+  foreach tt 27 85
+    option temp = $tt
+    foreach vd 1.1 0.7
+      alter vdd = $vd
+      tran 5p 4n
+      meas tran vblb FIND v(blb) AT=2.0n
+      meas tran vbl  FIND v(bl)  AT=2.0n
+      let dv = vblb - vbl
+      meas tran qmax MAX v(q) FROM=1n TO=4n
+      echo "$cb $vd $tt $&dv $&qmax" >> work/t5_cbl_sweep.data
+    end
+  end
+end
 
 quit
 .endc

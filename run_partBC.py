@@ -97,6 +97,8 @@ CACTI_PATTERNS = {
     "subarray_l_mm": r"Subarray Length \(mm\):\s*([\d.eE+-]+)",
     "mat_h_mm":      r"MAT Height \(mm\):\s*([\d.eE+-]+)",
     "nbanks":        r"Number of banks:\s*(\d+)",
+    "h_mm":          r"Cache height x width \(mm\):\s*([\d.eE+-]+)",
+    "w_mm":          r"Cache height x width \(mm\):\s*[\d.eE+-]+\s*x\s*([\d.eE+-]+)",
 }
 
 
@@ -115,6 +117,10 @@ def parse_cacti(out: str) -> dict:
     # Scale so the Part C comparison is like for like.
     if r["leak_mW"] is not None and r["nbanks"]:
         r["leak_total_mW"] = r["leak_mW"] * r["nbanks"]
+    # CACTI's own bounding box: the silicon the cache actually occupies,
+    # which exceeds the sum of the data and tag array areas.
+    if r["h_mm"] and r["w_mm"]:
+        r["footprint_mm2"] = r["h_mm"] * r["w_mm"]
     return r
 
 
@@ -246,6 +252,19 @@ def main():
         "-ResistanceOn (ohm):": "-ResistanceOn (ohm): 4000",
         "-ResistanceOff (ohm):": "-ResistanceOff (ohm): 12000",
     })
+    print("NVSim: reset current 100 uA, access transistor resized ...")
+    # 54 F^2 at aspect ratio 2.0 is 10.392 F x 5.196 F.  The 6 F access device
+    # lies along the long dimension, so 4.392 F of that is contact and spacing.
+    # Halving the write current halves the required width, 6 F -> 3 F, giving a
+    # long dimension of 7.392 F and a cell of 7.392 x 5.196 = 38.4 F^2.
+    c4b = run_nvsim("reset100_resized", {
+        "-ResetCurrent (uA):": "-ResetCurrent (uA): 100",
+        "-SetCurrent (uA):": "-SetCurrent (uA): 100",
+        "-AccessCMOSWidth (F):": "-AccessCMOSWidth (F): 3",
+        "-CellArea (F^2):": "-CellArea (F^2): 38.4",
+        "-CellAspectRatio:": "-CellAspectRatio: 1.4226",
+    })
+
     print("NVSim: reset current 100 uA ...")
     c4 = run_nvsim("reset100", {
         "-ResetCurrent (uA):": "-ResetCurrent (uA): 100",
@@ -452,6 +471,9 @@ Metric & SRAM (CACTI) & STT-MRAM (NVSim) & Ratio \\
         f"Write current halved (100\\,\\si{{\\micro\\ampere}}) & "
         f"{c4['hit_ns']:.2f} & {c4['write_ns']:.2f} & {c4['read_pJ']:.0f} & "
         f"{c4['write_pJ']:.0f} & {c4['leak_mW']:.0f} & {c4['total_area_mm2']:.3f} \\\\",
+        f"100\\,\\si{{\\micro\\ampere}} with cell resized to 38.4\\,F$^2$ & "
+        f"{c4b['hit_ns']:.2f} & {c4b['write_ns']:.2f} & {c4b['read_pJ']:.0f} & "
+        f"{c4b['write_pJ']:.0f} & {c4b['leak_mW']:.0f} & {c4b['total_area_mm2']:.3f} \\\\",
     ])
     (DATA / "table_partC_variants.tex").write_text(
         r"""\begin{tabular}{lrrrrrr}
@@ -523,6 +545,17 @@ Cell variant & Read & Write & Read & Write & Leak & Area \\
                                           / c1["total_area_mm2"]), 0)),
         mac("CresetWrite", fmt(c4["write_ns"])),
         mac("CresetWriteE", fmt(c4["write_pJ"], 0)),
+        mac("CrsArea", fmt(c4b["total_area_mm2"], 2)),
+        mac("CrsAreaDrop", fmt(100*(1-c4b["total_area_mm2"]/c1["total_area_mm2"]), 1)),
+        mac("CrsLeak", fmt(c4b["leak_mW"], 0)),
+        mac("CrsLeakDrop", fmt(100*(1-c4b["leak_mW"]/c1["leak_mW"]), 1)),
+        mac("CrsWriteE", fmt(c4b["write_pJ"], 0)),
+        mac("CrsWriteEDrop", fmt(100*(1-c4b["write_pJ"]/c1["write_pJ"]), 1)),
+        mac("CrsCellF", "38.4"),
+        mac("CrsCellDrop", "28.9"),
+        mac("CsenseTwo", "120"),
+        mac("CsenseThree", "320"),
+        mac("Bfootprint", fmt(b1.get("footprint_mm2"), 2)),
         mac("Cknee", str(int(iw[np.argmax(ia > flat + 1e-9)])) if (ia > flat + 1e-9).any() else "--"),
         mac("CareaAtMax", fmt(ia.max(), 2)),
         mac("CimaxUA", str(int(iw[-1]))),

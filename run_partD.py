@@ -120,6 +120,44 @@ def run(tag: str, cfg_text: str) -> dict:
     }
 
 
+def bank_parallelism() -> dict:
+    """Replay the trace through both address mappings and count how many of the
+    32 banks (2 ranks x 4 bank groups x 4 banks) each one actually reaches."""
+    addrs = []
+    for ln in (PARTD / "l2miss.trace").read_text().splitlines():
+        f = ln.split()
+        if len(f) == 2:
+            addrs.append(int(f[1], 16) >> 6)      # drop the 64 B burst offset
+    nCh, nRa, nBg, nBa, nCo = 1, 2, 4, 4, 1024
+
+    def peel(a, widths):
+        out = []
+        for w in widths:
+            out.append(a % w)
+            a //= w
+        return out
+
+    out = {}
+    for name, widths in (("RoBaRaCoCh", [nCh, nCo, nRa, nBg, nBa]),
+                         ("ChRaBaRoCo", [nCo, 65536, nBa, nBg, nRa])):
+        ids, per = set(), []
+        for a in addrs:
+            f = peel(a, widths)
+            bid = (f[2], f[3], f[4])
+            ids.add(bid)
+            per.append(bid)
+        win, tot, n = 64, 0, 0
+        for i in range(0, max(len(per) - win, 1), win):
+            tot += len(set(per[i:i + win]))
+            n += 1
+        from collections import Counter
+        busiest = Counter(per).most_common(1)[0][1] if per else 0
+        out[name] = {"banks_used": len(ids), "banks_total": 32,
+                     "mean_per_window": tot / max(n, 1),
+                     "busiest_share_pct": 100 * busiest / max(len(per), 1)}
+    return out
+
+
 def cfg_for(scheduler="FRFCFS", mapper="RoBaRaCoCh", channels=1) -> str:
     base = (PARTD / "ddr4.yaml").read_text()
     base = re.sub(r"(Scheduler:\n\s+impl: )\w+", rf"\g<1>{scheduler}", base)
@@ -225,6 +263,39 @@ def main():
     ax.legend(loc="upper left", fontsize=8)
     save(fig, IMAGES / "D_channels.pdf")
 
+    bp = bank_parallelism()
+
+    brows = "\n".join(
+        f"\\texttt{{{k}}} & {v['banks_used']} / {v['banks_total']} & "
+        f"{v['mean_per_window']:.2f} & {v['busiest_share_pct']:.1f}\\,\\% \\\\"
+        for k, v in bp.items())
+    (DATA / "table_partD_banks.tex").write_text(
+        r"""\begin{tabular}{lccc}
+\toprule
+Address mapping & banks reached & mean banks per & busiest bank's \\
+ & (of 32) & 64-access window & share of traffic \\
+\midrule
+""" + brows + "\n" + r"""\bottomrule
+\end{tabular}
+""")
+
+    ns_ = TIMING["tCK_ps"] / 1000.0
+    trows = []
+    for lab, r, ch in (("Baseline, FR-FCFS", t1, 1), ("FCFS", t2, 1),
+                       ("ChRaBaRoCo", t3, 1), ("Two channels", t4, 2)):
+        thr = (r["reads"] + r["writes"]) / r["cycles"] / ch
+        trows.append(f"{lab} & {thr:.4f} & {100*thr/(1/TIMING['tCCD_L']):.1f}\\,\\% "
+                     f"& {100*thr/(1/TIMING['tCCD_S']):.1f}\\,\\% \\\\")
+    (DATA / "table_partD_ccd.tex").write_text(
+        r"""\begin{tabular}{lccc}
+\toprule
+Configuration & accesses per cycle & vs $1/t_{CCD\_L}$ & vs $1/t_{CCD\_S}$ \\
+ & per channel & (0.125) & (0.250) \\
+\midrule
+""" + "\n".join(trows) + "\n" + r"""\bottomrule
+\end{tabular}
+""")
+
     # ---------------- table ----------------
     rows = []
     for lab, r in [("FR-FCFS, RoBaRaCoCh, 1 ch (baseline)", t1),
@@ -286,6 +357,15 @@ Configuration & Memory & Avg read & & Row-buffer & ACT \\
         mac("DchEight", fmt(chan_sweep[0]["cycles"]/chan_sweep[3]["cycles"], 2)),
         mac("DchFourLat", f"{chan_sweep[2]['avg_read_cyc']:.0f}"),
         mac("DchEightLat", f"{chan_sweep[3]['avg_read_cyc']:.0f}"),
+        mac("DbanksBase", str(bp["RoBaRaCoCh"]["banks_used"])),
+        mac("DbanksMap", str(bp["ChRaBaRoCo"]["banks_used"])),
+        mac("DwinBase", f"{bp['RoBaRaCoCh']['mean_per_window']:.2f}"),
+        mac("DwinMap", f"{bp['ChRaBaRoCo']['mean_per_window']:.2f}"),
+        mac("DbusyMap", f"{bp['ChRaBaRoCo']['busiest_share_pct']:.0f}"),
+        mac("DthrBase", f"{(t1['reads']+t1['writes'])/t1['cycles']:.4f}"),
+        mac("DactCeil", f"{32/(TIMING['tRAS']+TIMING['tRP']):.4f}"),
+        mac("DactRate", f"{t1['acts']/t1['cycles']:.4f}"),
+        mac("DactUtil", f"{100*(t1['acts']/t1['cycles'])/(32/(TIMING['tRAS']+TIMING['tRP'])):.1f}"),
     ]
     (DATA / "macros_partD.tex").write_text("\n".join(macros) + "\n")
     (DATA / "partD_summary.json").write_text(

@@ -197,6 +197,7 @@ def harvest(base: Path) -> dict:
                  ("t1_read", "t2_read_wide", "t4_read_85", "t4_read_85_07v",
                   "t2_upset")},
         "s27": read_table(w / "t3_sweep_27.data"),
+        "cbl": read_table(w / "t5_cbl_sweep.data"),
         "s85": read_table(w / "t3_sweep_85.data"),
         "wa": read_table(w / "t2_wa_sweep_27.data"),
     }
@@ -422,6 +423,40 @@ $V_{DD}$ & \multicolumn{3}{c}{$\Delta V$(BLB,BL) at 2\,ns (mV)}
 \end{tabular}
 """)
 
+    c = summary["cbl"]
+    rows = []
+    labels = {180: r"180\,fF (as given, $\approx$32 cells)",
+              260: r"260\,fF", 345: r"345\,fF (CACTI column, 512 cells)",
+              700: r"700\,fF", 1800: r"1.8\,pF"}
+    seen = []
+    for i in range(len(c["cbl_f"])):
+        f = round(c["cbl_f"][i] * 1e15)
+        if f in seen:
+            continue
+        seen.append(f)
+        sel = [j for j in range(len(c["cbl_f"]))
+               if round(c["cbl_f"][j] * 1e15) == f]
+        def pick(vdd, t):
+            for j in sel:
+                if abs(c["vdd"][j] - vdd) < 1e-6 and abs(c["temp_C"][j] - t) < 1:
+                    return c["dv"][j] * 1e3
+            return float("nan")
+        hot = pick(0.7, 85)
+        rows.append(f"{labels.get(f, str(f))} & {pick(1.1, 27):.0f} & "
+                    f"{pick(1.1, 85):.0f} & {pick(0.7, 27):.0f} & {hot:.0f} & "
+                    f"{hot/SENSE_OFFSET_MV:.1f}$\\times$ \\\\")
+    (DATA / "table_partA_cbl.tex").write_text(
+        r"""\begin{tabular}{lrrrrr}
+\toprule
+Bitline load & \multicolumn{4}{c}{$\Delta V$ at 2\,ns (mV)} & margin at \\
+\cmidrule(lr){2-5}
+ & 1.1\,V/27\,\si{\celsius} & 1.1\,V/85\,\si{\celsius}
+ & 0.7\,V/27\,\si{\celsius} & 0.7\,V/85\,\si{\celsius} & worst corner \\
+\midrule
+""" + "\n".join(rows) + "\n" + r"""\bottomrule
+\end{tabular}
+""")
+
     lp = summary["lp"]["meas"]["T1"] if summary["lp"] else None
     card_rows = [
         (r"45 nm HP (high performance)", t1),
@@ -473,6 +508,15 @@ PTM model card & $\Delta V$ @2\,ns (mV) & $\bar{I}_{\mathrm{read}}$ (\si{\micro\
         mac("AwaMarginX",
             fmt(summary["wa_crit_um"] / 0.16, 1) if summary["wa_crit_um"] else "--"),
         mac("Asenseoffset", f"{SENSE_OFFSET_MV:.0f}"),
+        mac("AdramCs", "25.8"),
+        mac("AcblRows", "512"),
+        mac("AcblWire", "89"),
+        mac("AcblReal", "345"),
+        mac("AdvReal", fmt(summary["cblpick"]["real_nom"], 0)),
+        mac("AdvRealHot", fmt(summary["cblpick"]["real_hot"], 0)),
+        mac("AdvRealHotX", fmt(summary["cblpick"]["real_hot"] / SENSE_OFFSET_MV, 1)),
+        mac("AdvBigHot", fmt(summary["cblpick"]["big_hot"], 0)),
+        mac("AdvBigHotX", fmt(summary["cblpick"]["big_hot"] / SENSE_OFFSET_MV, 1)),
         mac("Arefdv", f"{REFERENCE_DV_MV:.0f}"),
     ]
     if lp:
@@ -544,8 +588,21 @@ def main() -> None:
         plot_card_compare(hp["wave"]["t1_read"], lp["wave"]["t1_read"],
                           IMAGES / "A_card_compare.pdf")
 
+    cbl = hp["cbl"]
+
+    def cblpick(farads, vdd, t):
+        for j in range(len(cbl["cbl_f"])):
+            if (abs(cbl["cbl_f"][j] - farads) / farads < 0.02
+                    and abs(cbl["vdd"][j] - vdd) < 1e-6
+                    and abs(cbl["temp_C"][j] - t) < 1):
+                return cbl["dv"][j] * 1e3
+        return float("nan")
+
     summary = {
-        "hp": hp, "lp": lp,
+        "hp": hp, "lp": lp, "cbl": cbl,
+        "cblpick": {"real_nom": cblpick(345e-15, 1.1, 27),
+                    "real_hot": cblpick(345e-15, 0.7, 85),
+                    "big_hot": cblpick(1.8e-12, 0.7, 85)},
         "vfail27": v27, "vfail85": v85, "wa_crit_um": wa_crit,
         "extrapolated27": ex27, "extrapolated85": ex85,
         "sense_offset_mV": SENSE_OFFSET_MV,
