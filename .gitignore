@@ -1,0 +1,16 @@
+work/
+report/*.aux
+report/*.log
+report/*.out
+report/*.synctex.gz
+__pycache__/
+# built tools (clone + build per README)
+cacti/
+NVSim/
+gem5/
+gapbs/*.sg
+gapbs/*.wsg
+gapbs/bfs
+gapbs/sssp
+gapbs/converter
+ramulator2.0/build/

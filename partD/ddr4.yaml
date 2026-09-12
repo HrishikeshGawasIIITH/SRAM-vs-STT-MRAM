@@ -1,0 +1,46 @@
+# Part D baseline - L2 miss stream on one DDR4 channel.
+#
+# This is the assignment's ddr4.yaml expressed in the schema Ramulator 2.0a
+# actually accepts.  Two deviations, both forced by the tool:
+#   * Frontend is LoadStoreTrace, not SimpleO3.  SimpleO3 consumes an
+#     instruction trace ("<bubbles> <ld_addr> [st_addr]"), not the one-access-
+#     per-line memory trace the assignment shows.  LoadStoreTrace takes exactly
+#     that stream ("LD <addr>" / "ST <addr>") and, unlike ReadWriteTrace, feeds
+#     byte addresses through the address mapper - which Task 3 needs.
+#   * Scheduler FCFS is a ~40-line implementation added to this tree
+#     (src/dram_controller/impl/scheduler/fcfs_scheduler.cpp); stock 2.0a ships
+#     FRFCFS but no plain FCFS.
+Frontend:
+  impl: LoadStoreTrace
+  path: partD/l2miss.trace
+  clock_ratio: 8
+
+MemorySystem:
+  impl: GenericDRAM
+  clock_ratio: 3
+
+  DRAM:
+    impl: DDR4
+    org:
+      preset: DDR4_8Gb_x8
+      channel: 1
+      rank: 2
+    timing:
+      preset: DDR4_3200AA
+
+  Controller:
+    impl: Generic
+    Scheduler:
+      impl: FRFCFS
+    RefreshManager:
+      impl: AllBank
+    RowPolicy:
+      impl: OpenRowPolicy
+    plugins:
+      - ControllerPlugin:
+          impl: CommandCounter
+          commands_to_count: [ACT, PRE, PREA, RD, WR, RDA, WRA]
+          path: work/d/cmdcount.txt
+
+  AddrMapper:
+    impl: RoBaRaCoCh

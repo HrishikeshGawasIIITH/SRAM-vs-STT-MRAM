@@ -1,0 +1,28 @@
+// STT-MRAM bitcell, Part C.
+// The 16 lines specified in the assignment, plus the four NVSim requires and the
+// assignment omits (MinSenseVoltage, ReadVoltage, ResetEnergy/SetEnergy), taken
+// from NVSim's shipped sample_STTRAM.cell so the periphery matches Part A's
+// 25 mV sense-amp offset.
+
+-MemCellType: MRAM
+-CellArea (F^2): 54
+-CellAspectRatio: 2.0
+-ResistanceOn (ohm): 3000
+-ResistanceOff (ohm): 6000
+-ReadMode: current
+-ReadCurrent (uA): 40
+-ReadPower (uW): 145
+-ResetMode: current
+-ResetCurrent (uA): 200
+-ResetPulse (ns): 10
+-SetMode: current
+-SetCurrent (uA): 200
+-SetPulse (ns): 10
+-AccessType: CMOS
+-AccessCMOSWidth (F): 6
+
+-ReadVoltage (V): 0.25
+-MinSenseVoltage (mV): 25
+-ResetEnergy (pJ): 1
+-SetEnergy (pJ): 1
+-VoltageDropAccessDevice (V): 0.15
